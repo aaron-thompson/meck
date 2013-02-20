@@ -27,7 +27,8 @@
               history/0]).
 
 -export([get_history/2,
-         num_calls/4]).
+         num_calls/4,
+         new_filter/3]).
 
 %%%============================================================================
 %%% Types
@@ -75,10 +76,6 @@ num_calls(CallerPid, Mod, OptFunc, OptArgsSpec) ->
     Filter = new_filter(CallerPid, OptFunc, ArgsMatcher),
     Filtered = lists:filter(Filter, meck_proc:get_history(Mod)),
     length(Filtered).
-
-%%%============================================================================
-%%% Internal functions
-%%%============================================================================
 
 -spec new_filter(opt_pid(), opt_func(), meck_args_matcher:args_matcher()) ->
         fun((history_record()) -> boolean()).
