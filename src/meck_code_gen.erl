@@ -134,7 +134,7 @@ var_name(A) -> list_to_atom("A"++integer_to_list(A)).
 -spec exec(CallerPid::pid(), Mod::atom(), Func::atom(), Args::[any()]) ->
         Result::any().
 exec(Pid, Mod, Func, Args) ->
-    case meck_proc:get_result_spec(Mod, Func, Args) of
+    case meck_proc:get_result_spec(Mod, Func, Args, Pid) of
         undefined ->
             meck_proc:invalidate(Mod),
             raise(Pid, Mod, Func, Args, error, function_clause);

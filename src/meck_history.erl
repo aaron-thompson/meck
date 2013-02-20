@@ -28,7 +28,8 @@
 
 -export([get_history/2,
          num_calls/4,
-         capture/6]).
+         capture/6,
+         new_filter/3]).
 
 %%%============================================================================
 %%% Types
@@ -93,10 +94,6 @@ capture(Occur, OptCallerPid, Mod, Func, OptArgsSpec, ArgNum) ->
             {ok, lists:nth(ArgNum, Args)}
     end.
 
-%%%============================================================================
-%%% Internal functions
-%%%============================================================================
-
 -spec new_filter(opt_pid(), opt_func(), meck_args_matcher:args_matcher()) ->
         fun((history_record()) -> boolean()).
 new_filter(TheCallerPid, TheFunc, ArgsMatcher) ->
@@ -111,6 +108,10 @@ new_filter(TheCallerPid, TheFunc, ArgsMatcher) ->
        (_Other) ->
             false
     end.
+
+%%%============================================================================
+%%% Internal functions
+%%%============================================================================
 
 -spec nth_record(Occur::pos_integer(), history()) -> history_record() |
                                                      not_found.
