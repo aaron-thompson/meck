@@ -24,12 +24,13 @@
          set_expect/2,
          delete_expect/3,
          get_history/1,
+         wait/6,
          reset/1,
          validate/1,
          stop/1]).
 
 %% To be accessible from generated modules
--export([get_result_spec/3,
+-export([get_result_spec/4,
          add_history/5,
          invalidate/1]).
 
@@ -53,7 +54,16 @@
                 original :: term(),
                 was_sticky = false :: boolean(),
                 reload :: {Compiler::pid(), {From::pid(), Tag::any()}} |
-                undefined}).
+                          undefined,
+                trackers = [] :: [tracker()]}).
+
+%%%============================================================================
+%%% Types
+%%%============================================================================
+
+-type tracker() :: {Timer::reference(),
+                    meck_call_counter:call_counter(),
+                    ReplyTo::{Caller::pid(), Tag::any()}}.
 
 %%%============================================================================
 %%% API
@@ -71,10 +81,10 @@ start(Mod, Options) ->
     gen_server:StartFunc({local, meck_util:proc_name(Mod)}, ?MODULE,
                          [Mod, Options], [{spawn_opt, SpawnOpt}]).
 
--spec get_result_spec(Mod::atom(), Func::atom(), Args::[any()]) ->
+-spec get_result_spec(Mod::atom(), Func::atom(), Args::[any()], CallerPid::pid()) ->
         meck_ret_spec:result_spec() | undefined.
-get_result_spec(Mod, Func, Args) ->
-    gen_server(call, Mod, {get_result_spec, Func, Args}).
+get_result_spec(Mod, Func, Args, CallerPid) ->
+    gen_server(call, Mod, {get_result_spec, Func, Args, CallerPid}).
 
 -spec set_expect(Mod::atom(), meck_expect:expect()) ->
         ok | {error, Reason :: any()}.
@@ -96,6 +106,25 @@ add_history(Mod, CallerPid, Func, Args, Result) ->
 -spec get_history(Mod::atom()) -> meck_history:history().
 get_history(Mod) ->
     gen_server(call, Mod, get_history).
+
+-spec wait(Mod::atom(),
+           Times::non_neg_integer(),
+           OptFunc::'_' | atom(),
+           meck_args_matcher:args_matcher(),
+           OptCallerPid::'_' | pid(),
+           timeout()) ->
+        ok | {error, timeout}.
+wait(Mod, Times, OptFunc, ArgsMatcher, OptCallerPid, Timeout)
+  when erlang:is_integer(Times) andalso Times > 0 andalso
+       erlang:is_integer(Timeout) andalso Timeout >= 0 ->
+    Name = meck_util:proc_name(Mod),
+    try gen_server:call(Name, {wait, Times, OptFunc, ArgsMatcher, OptCallerPid,
+                               Timeout},
+                        infinity)
+    catch
+        exit:_Reason ->
+            erlang:error({not_mocked, Mod})
+    end.
 
 -spec reset(Mod::atom()) -> ok.
 reset(Mod) ->
@@ -147,9 +176,11 @@ init([Mod, Options]) ->
     end.
 
 %% @hidden
-handle_call({get_result_spec, Func, Args}, _From, S) ->
+handle_call({get_result_spec, Func, Args, CallerPid}, _From,
+            S = #state{trackers = Trackers}) ->
     {ResultSpec, NewExpects} = do_get_result_spec(S#state.expects, Func, Args),
-    {reply, ResultSpec, S#state{expects = NewExpects}};
+    UpdTrackers = update_trackers(Func, Args, CallerPid, Trackers),
+    {reply, ResultSpec, S#state{expects = NewExpects, trackers = UpdTrackers}};
 handle_call({set_expect, Expect}, From,
             S = #state{mod = Mod, expects = Expects}) ->
     check_if_being_reloaded(S),
@@ -173,6 +204,19 @@ handle_call(get_history, _From, S = #state{history = undefined}) ->
     {reply, [], S};
 handle_call(get_history, _From, S) ->
     {reply, lists:reverse(S#state.history), S};
+handle_call({wait, Times, OptFunc, ArgsMatcher, OptCallerPid, Timeout}, From,
+            S = #state{history = History, trackers = Trackers}) ->
+    case times_called(OptFunc, ArgsMatcher, OptCallerPid, History) of
+        CalledSoFar when CalledSoFar >= Times ->
+            {reply, ok, S};
+        _CalledSoFar when Timeout =:= 0 ->
+            {reply, {error, timeout}, S};
+        CalledSoFar ->
+            TimerRef = erlang:start_timer(Timeout, erlang:self(), tracker),
+            Counter = meck_call_counter:new(OptFunc, ArgsMatcher, OptCallerPid,
+                                            Times - CalledSoFar),
+            {noreply, S#state{trackers = [{TimerRef, Counter, From} | Trackers]}}
+    end;
 handle_call(reset, _From, S) ->
     {reply, ok, S#state{history = []}};
 handle_call(invalidate, _From, S) ->
@@ -203,6 +247,14 @@ handle_info({'EXIT', Pid, _Reason}, S = #state{reload = Reload}) ->
             gen_server:reply(From, ok),
             {noreply, S#state{reload = undefined}};
         _ ->
+            {noreply, S}
+    end;
+handle_info({timeout, TimerRef, tracker}, S = #state{trackers = Trackers}) ->
+    case lists:keytake(TimerRef, 1, Trackers) of
+        {value, {TimerRef, _Counter, ReplyTo}, UpdTrackers} ->
+            gen_server:reply(ReplyTo, {error, timeout}),
+            {noreply, S#state{trackers = UpdTrackers}};
+        _Else ->
             {noreply, S}
     end;
 handle_info(_Info, S) ->
@@ -467,3 +519,38 @@ cleanup(Mod) ->
     code:delete(Mod),
     code:purge(meck_util:original_name(Mod)),
     code:delete(meck_util:original_name(Mod)).
+
+-spec times_called(OptFunc::'_' | atom(),
+                   meck_args_matcher:args_matcher(),
+                   OptCallerPid::'_' | pid(),
+                   meck_history:history()) ->
+        non_neg_integer().
+times_called(OptFunc, ArgsMatcher, OptCallerPid, History) ->
+    Filter = meck_history:new_filter(OptCallerPid, OptFunc, ArgsMatcher),
+    lists:foldl(fun(HistoryRec, Acc) ->
+                        case Filter(HistoryRec) of
+                            true ->
+                                Acc + 1;
+                            _Else ->
+                                Acc
+                        end
+                end, 0, History).
+
+-spec update_trackers(Func::atom(), Args::[any()], CallerPid::pid(),
+                      Trackers::[tracker()]) ->
+        Updated::[tracker()].
+update_trackers(Func, Args, CallerPid, Trackers) ->
+    TrackerUpdater =
+        fun({TimerRef, Counter, ReplyTo} = Tracker, Acc) ->
+                case meck_call_counter:update(Counter, Func, Args, CallerPid) of
+                    unchanged ->
+                        [Tracker | Acc];
+                    zero_reached ->
+                        erlang:cancel_timer(TimerRef),
+                        gen_server:reply(ReplyTo, ok),
+                        Acc;
+                    UpdCounter ->
+                        [{TimerRef, UpdCounter, ReplyTo} | Acc]
+                end
+        end,
+    lists:foldl(TrackerUpdater, [], Trackers).
