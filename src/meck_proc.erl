@@ -30,7 +30,7 @@
          stop/1]).
 
 %% To be accessible from generated modules
--export([get_result_spec/4,
+-export([get_result_spec/3,
          add_history/5,
          invalidate/1]).
 
@@ -81,10 +81,10 @@ start(Mod, Options) ->
     gen_server:StartFunc({local, meck_util:proc_name(Mod)}, ?MODULE,
                          [Mod, Options], [{spawn_opt, SpawnOpt}]).
 
--spec get_result_spec(Mod::atom(), Func::atom(), Args::[any()], CallerPid::pid()) ->
+-spec get_result_spec(Mod::atom(), Func::atom(), Args::[any()]) ->
         meck_ret_spec:result_spec() | undefined.
-get_result_spec(Mod, Func, Args, CallerPid) ->
-    gen_server(call, Mod, {get_result_spec, Func, Args, CallerPid}).
+get_result_spec(Mod, Func, Args) ->
+    gen_server(call, Mod, {get_result_spec, Func, Args}).
 
 -spec set_expect(Mod::atom(), meck_expect:expect()) ->
         ok | {error, Reason :: any()}.
@@ -176,11 +176,9 @@ init([Mod, Options]) ->
     end.
 
 %% @hidden
-handle_call({get_result_spec, Func, Args, CallerPid}, _From,
-            S = #state{trackers = Trackers}) ->
+handle_call({get_result_spec, Func, Args}, _From, S) ->
     {ResultSpec, NewExpects} = do_get_result_spec(S#state.expects, Func, Args),
-    UpdTrackers = update_trackers(Func, Args, CallerPid, Trackers),
-    {reply, ResultSpec, S#state{expects = NewExpects, trackers = UpdTrackers}};
+    {reply, ResultSpec, S#state{expects = NewExpects}};
 handle_call({set_expect, Expect}, From,
             S = #state{mod = Mod, expects = Expects}) ->
     check_if_being_reloaded(S),
@@ -227,12 +225,18 @@ handle_call(stop, _From, S) ->
     {stop, normal, ok, S}.
 
 %% @hidden
-handle_cast({add_history, _Item}, S = #state{history = undefined}) ->
-    {noreply, S};
-handle_cast({add_history, Item}, S = #state{reload = Reload}) ->
+handle_cast({add_history, HistoryRecord}, S = #state{history = undefined,
+                                                     trackers = Trackers}) ->
+    UpdTrackers = update_trackers(HistoryRecord, Trackers),
+    {noreply, S#state{trackers = UpdTrackers}};
+handle_cast({add_history, HistoryRecord}, S = #state{history = History,
+                                                     trackers = Trackers,
+                                                     reload = Reload}) ->
     case Reload of
         undefined ->
-            {noreply, S#state{history = [Item | S#state.history]}};
+            UpdTrackers = update_trackers(HistoryRecord, Trackers),
+            {noreply, S#state{history = [HistoryRecord | History],
+                              trackers = UpdTrackers}};
         _ ->
             % Skip Item if the mocked module compiler is running.
             {noreply, S}
@@ -536,9 +540,18 @@ times_called(OptFunc, ArgsMatcher, OptCallerPid, History) ->
                         end
                 end, 0, History).
 
+-spec update_trackers(meck_history:history_record(), Trackers::[tracker()]) ->
+        UpdTrackers::[tracker()].
+update_trackers(_HistoryRecord, []) ->
+    [];
+update_trackers(HistoryRecord, Trackers) ->
+    CallerPid = erlang:element(1, HistoryRecord),
+    {_Mod, Func, Args} = erlang:element(2, HistoryRecord),
+    update_trackers(Func, Args, CallerPid, Trackers).
+
 -spec update_trackers(Func::atom(), Args::[any()], CallerPid::pid(),
                       Trackers::[tracker()]) ->
-        Updated::[tracker()].
+        UpdTrackers::[tracker()].
 update_trackers(Func, Args, CallerPid, Trackers) ->
     TrackerUpdater =
         fun({TimerRef, Counter, ReplyTo} = Tracker, Acc) ->
