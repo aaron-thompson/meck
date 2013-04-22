@@ -1301,6 +1301,12 @@ wait_timeout_test() ->
     %% Clean
     meck:unload().
 
+meck_implicit_new_test()->
+    meck:expect(meck_test_module, c, [{[1, 1], foo},
+                                      {['_', '_'], bar}]),
+    ?assertMatch(foo, meck_test_module:c(1, 1)),
+    meck:unload().
+
 %%=============================================================================
 %% Internal Functions
 %%=============================================================================
