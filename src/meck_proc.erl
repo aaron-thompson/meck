@@ -20,6 +20,7 @@
 -behaviour(gen_server).
 
 %% API
+
 -export([start/2,
          set_expect/2,
          delete_expect/3,
@@ -30,17 +31,17 @@
          stop/1]).
 
 %% To be accessible from generated modules
--export([get_result_spec/3,
-         add_history/5,
-         invalidate/1]).
+-export([get_result_spec/3]).
+-export([add_history/5]).
+-export([invalidate/1]).
 
 %% gen_server callbacks
--export([init/1,
-         handle_call/3,
-         handle_cast/2,
-         handle_info/2,
-         terminate/2,
-         code_change/3]).
+-export([init/1]).
+-export([handle_call/3]).
+-export([handle_cast/2]).
+-export([handle_info/2]).
+-export([terminate/2]).
+-export([code_change/3]).
 
 %%%============================================================================
 %%% Definitions
