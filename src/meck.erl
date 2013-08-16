@@ -21,10 +21,9 @@
 -module(meck).
 
 %% API
--export_type([matcher/0]).
--export_type([args_spec/0]).
--export_type([ret_spec/0]).
--export_type([func_clause_spec/0]).
+-export_type([args_spec/0,
+              ret_spec/0,
+              func_clause_spec/0]).
 
 %% Interface exports
 -export([new/1]).
@@ -188,7 +187,10 @@ new(Mod) when is_list(Mod) -> lists:foreach(fun new/1, Mod), ok.
       Mod :: atom(),
       Options :: [proplists:property()].
 new(Mod, Options) when is_atom(Mod), is_list(Options) ->
-    meck_proc:start(Mod, Options);
+    case meck_proc:start(Mod, Options) of
+        {ok, _Pid} -> ok;
+        {error, Reason} -> erlang:error(Reason, [Mod, Options])
+    end;
 new(Mod, Options) when is_list(Mod) ->
     lists:foreach(fun(M) -> new(M, Options) end, Mod),
     ok.
@@ -453,7 +455,7 @@ num_calls(Mod, OptFun, OptArgsSpec, OptPid) ->
       Mod :: atom(),
       OptFunc :: '_' | atom(),
       OptArgsSpec :: '_' | args_spec(),
-      Timeout :: non_neg_integer().
+      Timeout :: timeout().
 wait(Mod, OptFunc, OptArgsSpec, Timeout) ->
     wait(1, Mod, OptFunc, OptArgsSpec, '_', Timeout).
 
@@ -472,7 +474,7 @@ wait(Mod, OptFunc, OptArgsSpec, Timeout) ->
       Mod :: atom(),
       OptFunc :: '_' | atom(),
       OptArgsSpec :: '_' | args_spec(),
-      Timeout :: non_neg_integer().
+      Timeout :: timeout().
 wait(Times, Mod, OptFunc, OptArgsSpec, Timeout) ->
     wait(Times, Mod, OptFunc, OptArgsSpec, '_', Timeout).
 
@@ -491,12 +493,8 @@ wait(Times, Mod, OptFunc, OptArgsSpec, Timeout) ->
       OptFunc :: '_' | atom(),
       OptArgsSpec :: '_' | args_spec(),
       OptCallerPid :: '_' | pid(),
-      Timeout :: non_neg_integer().
-wait(0, _Mod, _OptFunc, _OptArgsSpec, _OptCallerPid, _Timeout) ->
-    ok;
-wait(Times, Mod, OptFunc, OptArgsSpec, OptCallerPid, Timeout)
-  when is_integer(Times) andalso Times > 0 andalso
-       is_integer(Timeout) andalso Timeout >= 0 ->
+      Timeout :: timeout().
+wait(Times, Mod, OptFunc, OptArgsSpec, OptCallerPid, Timeout) ->
     ArgsMatcher = meck_args_matcher:new(OptArgsSpec),
     meck_proc:wait(Mod, Times, OptFunc, ArgsMatcher, OptCallerPid, Timeout).
 
@@ -583,8 +581,7 @@ is(MatcherImpl) ->
     meck_matcher:new(MatcherImpl).
 
 %% @doc Returns the value of an argument as it was passed to a particular
-%% function call made by a particular process. It fails with `not_found' error
-%% if a function call of interest has never been made.
+%% function call made by a particular process.
 %%
 %% It retrieves the value of argument at `ArgNum' position as it was passed
 %% to function call `Mod:Func' with arguments that match `OptArgsSpec' made by
@@ -597,7 +594,8 @@ is(MatcherImpl) ->
 %% If an occurrence of a function call irrespective of the calling process needs
 %% to be captured then `_' might be passed as `OptCallerPid', but it is better
 %% to use {@link capture/3} instead.
--spec capture(Occur, Mod, Func, OptArgsSpec, ArgNum, OptCallerPid) -> ArgValue when
+-spec capture(Occur, Mod, Func, OptArgsSpec, ArgNum, OptCallerPid) ->
+        {ok, ArgValue} | not_found when
       Occur :: first | last | pos_integer(),
       Mod :: atom(),
       Func :: atom(),
@@ -609,8 +607,7 @@ capture(Occur, Mod, Func, OptArgsSpec, ArgNum, OptCallerPid) ->
     meck_history:capture(Occur, OptCallerPid, Mod, Func, OptArgsSpec, ArgNum).
 
 %% @doc Returns the value of an argument as it was passed to a particular
-%% function call, It fails with `not_found' error if a function call of
-%% interest has never been made.
+%% function call.
 %%
 %% It retrieves the value of argument at `ArgNum' position as it was passed
 %% to function call `Mod:Func' with arguments that match `OptArgsSpec' that
@@ -621,7 +618,8 @@ capture(Occur, Mod, Func, OptArgsSpec, ArgNum, OptCallerPid) ->
 %% or the last time respectively.
 %%
 %% @equiv capture(Occur, '_', Mod, Func, OptArgsSpec, ArgNum)
--spec capture(Occur, Mod, Func, OptArgsSpec, ArgNum) -> ArgValue when
+-spec capture(Occur, Mod, Func, OptArgsSpec, ArgNum) ->
+        {ok, ArgValue} | not_found when
       Occur :: first | last | pos_integer(),
       Mod::atom(),
       Func::atom(),

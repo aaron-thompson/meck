@@ -20,7 +20,6 @@
 -behaviour(gen_server).
 
 %% API
-
 -export([start/2,
          set_expect/2,
          delete_expect/3,
@@ -31,17 +30,17 @@
          stop/1]).
 
 %% To be accessible from generated modules
--export([get_result_spec/3]).
--export([add_history/5]).
--export([invalidate/1]).
+-export([get_result_spec/3,
+         add_history/5,
+         invalidate/1]).
 
 %% gen_server callbacks
--export([init/1]).
--export([handle_call/3]).
--export([handle_cast/2]).
--export([handle_info/2]).
--export([terminate/2]).
--export([code_change/3]).
+-export([init/1,
+         handle_call/3,
+         handle_cast/2,
+         handle_info/2,
+         terminate/2,
+         code_change/3]).
 
 %%%============================================================================
 %%% Definitions
@@ -79,11 +78,8 @@ start(Mod, Options) ->
                     false -> start_link
                 end,
     SpawnOpt = proplists:get_value(spawn_opt, Options, []),
-    case gen_server:StartFunc({local, meck_util:proc_name(Mod)}, ?MODULE,
-                              [Mod, Options], [{spawn_opt, SpawnOpt}]) of
-        {ok, _Pid}      -> ok;
-        {error, Reason} -> erlang:error(Reason, [Mod, Options])
-    end.
+    gen_server:StartFunc({local, meck_util:proc_name(Mod)}, ?MODULE,
+                         [Mod, Options], [{spawn_opt, SpawnOpt}]).
 
 -spec get_result_spec(Mod::atom(), Func::atom(), Args::[any()]) ->
         meck_ret_spec:result_spec() | undefined.
@@ -91,23 +87,9 @@ get_result_spec(Mod, Func, Args) ->
     gen_server(call, Mod, {get_result_spec, Func, Args}).
 
 -spec set_expect(Mod::atom(), meck_expect:expect()) ->
-        ok | {error, Reason::any()}.
+        ok | {error, Reason :: any()}.
 set_expect(Mod, Expect) ->
-    Proc = meck_util:proc_name(Mod),
-    try
-        gen_server:call(Proc, {set_expect, Expect})
-    catch
-        exit:{noproc, _Details} ->
-            Options = [Mod, [passthrough]],
-            case gen_server:start({local, Proc}, ?MODULE, Options, []) of
-                {ok, Pid} ->
-                    Result = gen_server:call(Proc, {set_expect, Expect}),
-                    true = erlang:link(Pid),
-                    Result;
-                {error, {{undefined_module, Mod}, _StackTrace}} ->
-                    erlang:error({not_mocked, Mod})
-            end
-    end.
+    gen_server(call, Mod, {set_expect, Expect}).
 
 -spec delete_expect(Mod::atom(), Func::atom(), Ari::byte()) -> ok.
 delete_expect(Mod, Func, Ari) ->

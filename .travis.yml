@@ -3,8 +3,10 @@ notifications:
   email:
     - hello@alind.io
 otp_release:
-  - R16B
-  - R15B03
+  - R15B
   - R14B04
+  - R14B03
+  - R14B02
+before_install: "sh change_permissions.sh"
 before_script: "make get-deps"
 script: "make all"

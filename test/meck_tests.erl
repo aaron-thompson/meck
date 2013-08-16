@@ -21,20 +21,6 @@
 -include_lib("eunit/include/eunit.hrl").
 -include_lib("hamcrest/include/hamcrest.hrl").
 
-
--define(assertTerminated(MonitorRef, Reason, Timeout),
-        (fun() ->
-                receive
-                    {'DOWN', MonitorRef, process, _Pid, Reason} ->
-                         ok;
-                    {'DOWN', MonitorRef, process, _Pid, AnotherReason} ->
-                        erlang:error({dead_for_another_reason, AnotherReason})
-                after
-                    Timeout ->
-                        erlang:error(still_alive)
-                end
-         end)()).
-
 meck_test_() ->
     {foreach, fun setup/0, fun teardown/1,
      [{with, [T]} || T <- [fun ?MODULE:new_/1,
@@ -44,7 +30,6 @@ meck_test_() ->
                            fun ?MODULE:expect_/1,
                            fun ?MODULE:exports_/1,
                            fun ?MODULE:call_return_value_/1,
-                           fun ?MODULE:call_return_value_improper_list_/1,
                            fun ?MODULE:call_argument_/1,
                            fun ?MODULE:call_undef_/1,
                            fun ?MODULE:call_function_clause_/1,
@@ -160,12 +145,6 @@ exports_(Mod) ->
 call_return_value_(Mod) ->
     ok = meck:expect(Mod, test, fun() -> apa end),
     ?assertEqual(apa, Mod:test()),
-    ?assertEqual(true, meck:validate(Mod)).
-
-call_return_value_improper_list_(Mod) ->
-    Dict = dict:store(hest, apa, dict:new()),
-    ok = meck:expect(Mod, test, 0, Dict),
-    ?assertEqual(Dict, Mod:test()),
     ?assertEqual(true, meck:validate(Mod)).
 
 call_argument_(Mod) ->
@@ -1312,154 +1291,6 @@ wait_timeout_test() ->
     test:foo(1, 2),
     %% Then
     ?assertMatch({error, timeout}, meck:wait(2, test, foo, [1, '_'], '_', 10)),
-    %% Clean
-    meck:unload().
-
-meck_implicit_new_test()->
-    meck:expect(meck_test_module, c, [{[1, 1], foo},
-                                      {['_', '_'], bar}]),
-    ?assertMatch(foo, meck_test_module:c(1, 1)),
-    meck:unload().
-
-wait_for_zero_calls_test() ->
-    %% Given
-    meck:new(test, [non_strict]),
-    %% When/Then
-    ?assertMatch(ok, meck:wait(0, test, foo, [1, '_'], 100)),
-    %% Clean
-    meck:unload().
-
-wait_already_called_test() ->
-    %% Given
-    meck:new(test, [non_strict]),
-    meck:expect(test, foo, 2, ok),
-    %% When
-    test:foo(1, 2),
-    test:foo(1, 2),
-    %% Then
-    ?assertMatch(ok, meck:wait(2, test, foo, [1, '_'], 100)),
-    %% Clean
-    meck:unload().
-
-wait_not_called_zero_timeout_test() ->
-    %% Given
-    meck:new(test, [non_strict]),
-    meck:expect(test, foo, 2, ok),
-    %% When
-    test:foo(1, 2),
-    test:foo(1, 2),
-    %% Then
-    ?assertError(timeout, meck:wait(3, test, foo, [1, '_'], 0)),
-    %% Clean
-    meck:unload().
-
-wait_not_called_another_proc_test() ->
-    %% Given
-    meck:new(test, [non_strict]),
-    meck:expect(test, foo, 2, ok),
-    %% When
-    test:foo(1, 2), % Called, but not by the expected proc.
-    Pid = erlang:spawn(fun() ->
-                              test:foo(2, 2) % Unexpected first argument
-                       end),
-    %% Then
-    ?assertError(timeout, meck:wait(1, test, foo, [1, '_'], Pid, 100)),
-    %% Clean
-    meck:unload().
-
-wait_called_another_proc_test() ->
-    %% Given
-    meck:new(test, [non_strict]),
-    meck:expect(test, foo, 2, ok),
-    %% When
-    Pid = erlang:spawn(fun() ->
-                              timer:sleep(50),
-                              test:foo(1, 2),
-                              test:foo(2, 2), % Unexpected first argument
-                              test:foo(1, 2)
-                       end),
-    %% Then
-    ?assertMatch(ok, meck:wait(2, test, foo, [1, '_'], Pid, 500)),
-    %% Clean
-    meck:unload().
-
-wait_timeout_test() ->
-    %% Given
-    meck:new(test, [non_strict]),
-    meck:expect(test, foo, 2, ok),
-    %% When
-    test:foo(1, 2),
-    %% Then
-    ?assertError(timeout, meck:wait(2, test, foo, [1, '_'], '_', 10)),
-    %% Clean
-    meck:unload().
-
-wait_for_the_same_pattern_on_different_processes_test() ->
-    %% Given
-    meck:new(test, [non_strict]),
-    meck:expect(test, foo, 2, ok),
-    Pid1 = erlang:spawn(fun() ->
-                               ?assertMatch(ok,
-                                            meck:wait(2, test, foo,
-                                                      [1, 2], 100))
-                         end),
-    MonitorRef1 = erlang:monitor(process, Pid1),
-    Pid2 = erlang:spawn(fun() ->
-                               ?assertMatch(ok,
-                                            meck:wait(3, test, foo,
-                                                      [1, 2], 100))
-                        end),
-    MonitorRef2 = erlang:monitor(process, Pid2),
-    %% When
-    timer:sleep(50),
-    test:foo(1, 2),
-    test:foo(1, 2),
-    %% Then
-    ?assertTerminated(MonitorRef1, normal, 300),
-    ?assertTerminated(MonitorRef2, {timeout, _}, 300),
-    %% Clean
-    meck:unload().
-
-wait_for_different_patterns_on_different_processes_test() ->
-    %% Given
-    meck:new(test, [non_strict]),
-    meck:expect(test, foo, 1, ok),
-    meck:expect(test, bar, 2, ok),
-    Pid1 = erlang:spawn(fun() ->
-                               ?assertMatch(ok,
-                                            meck:wait(2, test, foo,
-                                                      [1], 100))
-                        end),
-    MonitorRef1 = erlang:monitor(process, Pid1),
-    Pid2 = erlang:spawn(fun() ->
-                               ?assertMatch(ok,
-                                            meck:wait(3, test, bar,
-                                                      [1, 2], 100))
-                        end),
-    MonitorRef2 = erlang:monitor(process, Pid2),
-    %% When
-    timer:sleep(50),
-    test:bar(1, 2),
-    test:foo(1),
-    test:bar(1, 2),
-    test:bar(1, 2),
-    %% Then
-    ?assertTerminated(MonitorRef1, {timeout, _}, 300),
-    ?assertTerminated(MonitorRef2, normal, 300),
-    %% Clean
-    meck:unload().
-
-wait_purge_expired_tracker_test() ->
-    %% Given
-    meck:new(test, [non_strict]),
-    meck:expect(test, foo, 2, ok),
-    ?assertError(timeout, meck:wait(1, test, foo, [1, '_'], 1)),
-    %% When
-    timer:sleep(50),
-    % Makes expired tracker be purged. There is no way to check that from the
-    % code only in the coverage report. But at least we exercise this code path
-    % here.
-    test:foo(1, 2),
     %% Clean
     meck:unload().
 
